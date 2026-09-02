@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import AsyncMock
 
 from cotton_mcp_tools.tools.ui_analyzer import (
-    _ALLOWED_IMAGE_MIME_TYPES,
     _FRAMEWORK_PROMPTS,
     _load_image,
     _resolve_provider,
@@ -621,7 +619,7 @@ class TestAnalyzeUi:
             "cotton_mcp_tools.tools.ui_analyzer.PROVIDER_MAP",
             {"openai": lambda: mock_service},
         ):
-            result = await tool_func(
+            await tool_func(
                 image=url,
                 framework="html",
             )
