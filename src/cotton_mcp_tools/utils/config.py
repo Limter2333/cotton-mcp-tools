@@ -38,6 +38,14 @@ class Config:
         default_factory=lambda: os.getenv("MULTIMODAL_MODEL", "gpt-4o")
     )
 
+    # Xiaohongshu (XHS) settings
+    xhs_cookie: str = field(
+        default_factory=lambda: os.getenv("XHS_COOKIE", "")
+    )
+    xhs_proxy: str = field(
+        default_factory=lambda: os.getenv("XHS_PROXY", "")
+    )
+
     @classmethod
     def from_env(cls) -> Config:
         """Create a Config instance from environment variables."""
