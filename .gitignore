@@ -61,4 +61,4 @@ secrets/
 *.key
 
 # Claude Code specific
-.claude/settings.local.json
+.claude/

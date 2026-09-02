@@ -13,9 +13,30 @@ from dataclasses import dataclass, field
 class Config:
     """Application configuration loaded from environment variables."""
 
-    # Add your configuration fields here
-    debug: bool = field(default_factory=lambda: os.getenv("COTTON_DEBUG", "false").lower() == "true")
-    log_level: str = field(default_factory=lambda: os.getenv("COTTON_LOG_LEVEL", "INFO"))
+    debug: bool = field(
+        default_factory=lambda: os.getenv(
+            "COTTON_DEBUG", "false"
+        ).lower() == "true"
+    )
+    log_level: str = field(
+        default_factory=lambda: os.getenv("COTTON_LOG_LEVEL", "INFO")
+    )
+
+    # Multimodal API keys
+    openai_api_key: str = field(
+        default_factory=lambda: os.getenv("OPENAI_API_KEY", "")
+    )
+    anthropic_api_key: str = field(
+        default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", "")
+    )
+
+    # Multimodal defaults
+    default_provider: str = field(
+        default_factory=lambda: os.getenv("MULTIMODAL_PROVIDER", "openai")
+    )
+    default_model: str = field(
+        default_factory=lambda: os.getenv("MULTIMODAL_MODEL", "gpt-4o")
+    )
 
     @classmethod
     def from_env(cls) -> Config:
