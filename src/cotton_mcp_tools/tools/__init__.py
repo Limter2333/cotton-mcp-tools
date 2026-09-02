@@ -2,6 +2,7 @@
 
 from mcp.server.fastmcp import FastMCP
 
+from cotton_mcp_tools.tools.ocr import register_ocr_tools
 from cotton_mcp_tools.tools.sample import register_sample_tools
 from cotton_mcp_tools.tools.ui_analyzer import register_ui_analyzer_tools
 from cotton_mcp_tools.tools.xiaohongshu import register_xiaohongshu_tools
@@ -12,3 +13,4 @@ def register_all_tools(server: FastMCP) -> None:
     register_sample_tools(server)
     register_ui_analyzer_tools(server)
     register_xiaohongshu_tools(server)
+    register_ocr_tools(server)

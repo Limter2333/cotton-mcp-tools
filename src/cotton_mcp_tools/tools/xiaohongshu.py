@@ -1,7 +1,8 @@
 """Xiaohongshu (XHS) crawler tools for MCP server.
 
 Provides tools to search notes, get note details, comments,
-and creator information from Xiaohongshu.
+and creator information from Xiaohongshu. Also provides tools
+for analyzing note images with OCR.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import logging
 
 from mcp.server.fastmcp import FastMCP
 
+from cotton_mcp_tools.services.ocr_service import OCRService
 from cotton_mcp_tools.services.xhs_service import (
     DataFetchError,
     IPBlockError,
@@ -202,3 +204,128 @@ def register_xiaohongshu_tools(server: FastMCP) -> None:
         except XHSError as exc:
             logger.error("xhs_get_creator_notes failed: %s", exc)
             return f"Error: {exc}"
+
+    @server.tool()
+    async def xhs_analyze_note_with_ocr(
+        note_id: str,
+        max_images: int = 5,
+        language: str = "zh",
+        model: str | None = None,
+    ) -> str:
+        """Get Xiaohongshu note detail and analyze text in images using OCR.
+
+        Fetches the note details, extracts image URLs, performs OCR on each
+        image to recognize text content, and returns a comprehensive analysis
+        combining the note content with OCR results.
+
+        Args:
+            note_id: The note ID to fetch and analyze.
+            max_images: Maximum number of images to analyze (default: 5).
+            language: Expected language for OCR (default: "zh" for Chinese).
+            model: Optional model override for OCR.
+
+        Returns:
+            JSON formatted result with note details, OCR results for each
+            image, and a comprehensive summary.
+        """
+        try:
+            xhs_service = _create_service()
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+        # Step 1: Get note details
+        try:
+            note = await xhs_service.get_note_detail(note_id)
+            if not note:
+                return json.dumps({
+                    "error": f"Note not found with ID '{note_id}'",
+                }, ensure_ascii=False)
+        except XHSError as exc:
+            logger.error("xhs_analyze_note_with_ocr failed to get note: %s", exc)
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+        # Step 2: Format note data
+        formatted_note = format_note_data(note)
+        image_urls = formatted_note.get("image_list", [])
+
+        # Limit images
+        images_to_analyze = image_urls[:max_images]
+
+        # Step 3: Perform OCR on each image
+        ocr_results = []
+        all_ocr_text = []
+
+        if images_to_analyze:
+            try:
+                ocr_service = OCRService(model=model)
+
+                for i, img_url in enumerate(images_to_analyze):
+                    if not img_url:
+                        continue
+
+                    try:
+                        logger.info("Analyzing image %d/%d: %s", i + 1, len(images_to_analyze), img_url[:50])
+                        ocr_result = await ocr_service.recognize_text(
+                            image=img_url,
+                            language=language,
+                        )
+                        ocr_result["image_url"] = img_url
+                        ocr_result["image_index"] = i + 1
+                        ocr_results.append(ocr_result)
+
+                        if ocr_result.get("full_text"):
+                            all_ocr_text.append(ocr_result["full_text"])
+                    except Exception as exc:
+                        logger.warning("OCR failed for image %d: %s", i + 1, exc)
+                        ocr_results.append({
+                            "image_url": img_url,
+                            "image_index": i + 1,
+                            "error": str(exc),
+                            "has_text": False,
+                        })
+            except ValueError as exc:
+                logger.warning("Failed to create OCR service: %s", exc)
+
+        # Step 4: Generate comprehensive summary
+        note_desc = formatted_note.get("desc", "")
+        note_title = formatted_note.get("title", "")
+        note_tags = formatted_note.get("tag_list", [])
+
+        # Combine all text sources
+        combined_text_parts = []
+        if note_title:
+            combined_text_parts.append(f"标题: {note_title}")
+        if note_desc:
+            combined_text_parts.append(f"描述: {note_desc}")
+        if note_tags:
+            combined_text_parts.append(f"标签: {', '.join(note_tags)}")
+        if all_ocr_text:
+            combined_text_parts.append(f"图片文字内容:\n" + "\n---\n".join(all_ocr_text))
+
+        combined_text = "\n\n".join(combined_text_parts)
+
+        # Build final result
+        result = {
+            "note": formatted_note,
+            "ocr_analysis": {
+                "total_images": len(image_urls),
+                "analyzed_images": len(images_to_analyze),
+                "images_with_text": sum(1 for r in ocr_results if r.get("has_text")),
+                "results": ocr_results,
+            },
+            "summary": {
+                "title": note_title,
+                "description": note_desc,
+                "tags": note_tags,
+                "ocr_text_count": len(all_ocr_text),
+                "combined_text": combined_text,
+                "engagement": {
+                    "likes": formatted_note.get("liked_count", 0),
+                    "collects": formatted_note.get("collected_count", 0),
+                    "comments": formatted_note.get("comment_count", 0),
+                    "shares": formatted_note.get("share_count", 0),
+                },
+            },
+        }
+
+        return json.dumps(result, ensure_ascii=False, indent=2)
