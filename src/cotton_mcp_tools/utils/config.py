@@ -46,6 +46,14 @@ class Config:
         default_factory=lambda: os.getenv("XHS_PROXY", "")
     )
 
+    # OCR settings
+    ocr_backend: str = field(
+        default_factory=lambda: os.getenv("OCR_BACKEND", "llm")
+    )
+    ocr_languages: str = field(
+        default_factory=lambda: os.getenv("OCR_LANGUAGES", "ch,en")
+    )
+
     @classmethod
     def from_env(cls) -> Config:
         """Create a Config instance from environment variables."""

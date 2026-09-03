@@ -24,6 +24,11 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "ruff>=0.1.0",
 ]
+ocr = [
+    "paddlepaddle>=2.0.0",
+    "paddleocr>=2.0.0",
+    "easyocr>=1.7.0",
+]
 
 [project.scripts]
 cotton-mcp-tools = "cotton_mcp_tools.main:main"
