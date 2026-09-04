@@ -166,6 +166,18 @@ class TestResolveProvider:
         assert provider == "openai"
         assert model == "o1-preview"
 
+    def test_o3_model_infers_openai(self):
+        """A model starting with 'o3' should infer openai provider."""
+        provider, model = _resolve_provider("o3-mini")
+        assert provider == "openai"
+        assert model == "o3-mini"
+
+    def test_empty_model_uses_default_provider(self):
+        """An empty model string should use the default provider."""
+        provider, model = _resolve_provider("")
+        assert provider == "openai"  # default
+        assert model == ""
+
     def test_unknown_model_uses_default_provider(self):
         """An unrecognized model should use the default provider."""
         provider, model = _resolve_provider("some-custom-model")
@@ -191,6 +203,13 @@ class TestFrameworkValidation:
         """All framework prompts should be non-empty strings."""
         for fw, prompt in _FRAMEWORK_PROMPTS.items():
             assert isinstance(prompt, str) and len(prompt) > 0, f"Empty prompt for {fw}"
+
+    def test_anthropic_model_infers_claude(self):
+        """A model starting with 'anthropic' should infer claude provider."""
+        provider, model = _resolve_provider("anthropic/claude-3-opus")
+        assert provider == "claude"
+        # When 'anthropic' is not in PROVIDER_MAP, the full model string is returned
+        assert model == "anthropic/claude-3-opus"
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +434,38 @@ class TestAnalyzeUi:
             )
 
         assert result == "<html></html>"
+
+    @pytest.mark.asyncio
+    async def test_framework_whitespace_stripped(self, tool_func, tmp_path):
+        """Framework parameter should have whitespace stripped."""
+        # Create a valid image file
+        png_file = tmp_path / "test.png"
+        png_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+
+        # Mock the service to avoid real API calls
+        mock_service = AsyncMock()
+        mock_service.analyze_image = AsyncMock(return_value="<html></html>")
+
+        with patch.dict(
+            "cotton_mcp_tools.tools.ui_analyzer.PROVIDER_MAP",
+            {"openai": lambda: mock_service},
+        ):
+            result = await tool_func(
+                image=str(png_file),
+                framework="  html  ",
+            )
+
+        assert result == "<html></html>"
+
+    @pytest.mark.asyncio
+    async def test_empty_framework_returns_error(self, tool_func):
+        """An empty framework should return an error string."""
+        result = await tool_func(
+            image="https://example.com/img.png",
+            framework="",
+        )
+        assert "Error" in result
+        assert "Unsupported framework" in result
 
     @pytest.mark.asyncio
     async def test_image_not_found_returns_error(self, tool_func):
