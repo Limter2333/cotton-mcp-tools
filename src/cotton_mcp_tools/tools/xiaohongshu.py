@@ -329,3 +329,147 @@ def register_xiaohongshu_tools(server: FastMCP) -> None:
         }
 
         return json.dumps(result, ensure_ascii=False, indent=2)
+
+    @server.tool()
+    async def xhs_analyze_comments_with_ocr(
+        note_id: str,
+        max_comments: int = 20,
+        max_images: int = 10,
+        language: str = "zh",
+        backend: str = "llm",
+    ) -> str:
+        """Get Xiaohongshu note comments and analyze comment images with OCR.
+
+        Fetches comments for a note, extracts image URLs from comments,
+        performs OCR on each image to recognize text content, and returns
+        a comprehensive analysis combining comment text with OCR results.
+
+        Args:
+            note_id: The note ID to fetch comments for.
+            max_comments: Maximum number of comments to fetch (default: 20).
+            max_images: Maximum number of images to analyze (default: 10).
+            language: Expected language for OCR (default: "zh" for Chinese).
+            backend: OCR backend to use - "llm" (default), "paddleocr", "easyocr".
+
+        Returns:
+            JSON formatted result with comments, image OCR analysis,
+            and a summary.
+        """
+        try:
+            xhs_service = _create_service()
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+        # Step 1: Get comments
+        try:
+            comments = await xhs_service.get_note_all_comments(
+                note_id=note_id,
+                max_comments=max_comments,
+            )
+        except XHSError as exc:
+            logger.error("xhs_analyze_comments_with_ocr failed to get comments: %s", exc)
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+        if not comments:
+            return json.dumps({
+                "note_id": note_id,
+                "total_comments": 0,
+                "total_images": 0,
+                "analyzed_images": 0,
+                "comments": [],
+                "summary": {
+                    "total_comments_with_images": 0,
+                    "all_image_texts": [],
+                },
+            }, ensure_ascii=False, indent=2)
+
+        # Step 2: Format comments and collect image URLs
+        formatted_comments = []
+        all_image_urls = []
+
+        for comment in comments:
+            formatted = format_comment_data(comment)
+            pictures = formatted.get("pictures", [])
+            # Filter out empty URLs
+            valid_pictures = [p for p in pictures if p]
+            formatted["_pictures_to_analyze"] = valid_pictures
+            all_image_urls.extend(valid_pictures)
+            formatted_comments.append(formatted)
+
+        # Limit total images
+        images_to_analyze = all_image_urls[:max_images]
+
+        # Step 3: Perform OCR on images
+        ocr_results = {}
+        all_image_texts = []
+
+        if images_to_analyze:
+            try:
+                ocr_service = OCRService(backend=backend)
+
+                for i, img_url in enumerate(images_to_analyze):
+                    if not img_url:
+                        continue
+
+                    try:
+                        logger.info(
+                            "Analyzing comment image %d/%d: %s",
+                            i + 1, len(images_to_analyze), img_url[:50],
+                        )
+                        ocr_result = await ocr_service.recognize_text(
+                            image=img_url,
+                            language=language,
+                        )
+                        ocr_results[img_url] = ocr_result
+
+                        if ocr_result.get("full_text"):
+                            all_image_texts.append(ocr_result["full_text"])
+                    except Exception as exc:
+                        logger.warning("OCR failed for comment image %d: %s", i + 1, exc)
+                        ocr_results[img_url] = {
+                            "error": str(exc),
+                            "has_text": False,
+                        }
+            except (ValueError, RuntimeError) as exc:
+                logger.warning("Failed to create OCR service: %s", exc)
+
+        # Step 4: Build results with picture analysis
+        analyzed_count = 0
+        comments_with_images = 0
+
+        for comment in formatted_comments:
+            pictures_to_analyze = comment.pop("_pictures_to_analyze", [])
+            picture_analysis = []
+
+            if pictures_to_analyze:
+                comments_with_images += 1
+
+            for img_url in pictures_to_analyze:
+                if img_url in ocr_results:
+                    picture_analysis.append({
+                        "image_url": img_url,
+                        "ocr_result": ocr_results[img_url],
+                    })
+                    analyzed_count += 1
+                else:
+                    picture_analysis.append({
+                        "image_url": img_url,
+                        "ocr_result": {"has_text": False, "texts": [], "full_text": ""},
+                    })
+
+            comment["picture_analysis"] = picture_analysis
+
+        # Build final result
+        result = {
+            "note_id": note_id,
+            "total_comments": len(formatted_comments),
+            "total_images": len(all_image_urls),
+            "analyzed_images": min(analyzed_count, max_images),
+            "comments": formatted_comments,
+            "summary": {
+                "total_comments_with_images": comments_with_images,
+                "all_image_texts": all_image_texts,
+            },
+        }
+
+        return json.dumps(result, ensure_ascii=False, indent=2)

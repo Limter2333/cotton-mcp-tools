@@ -491,3 +491,217 @@ class TestIntegration:
                 formatted = format_note_data(note_card)
                 assert formatted["note_id"] == "test_note_123"
                 assert formatted["liked_count"] == 100
+
+
+# --- Test Comment OCR Analysis ---
+
+
+class TestCommentOCRAnalysis:
+    """Tests for xhs_analyze_comments_with_ocr tool."""
+
+    @pytest.mark.asyncio
+    async def test_analyze_comments_with_ocr_success(self):
+        """Test successful comment OCR analysis."""
+        with patch("cotton_mcp_tools.tools.xiaohongshu._create_service") as mock_xhs:
+            mock_xhs_service = MagicMock()
+            mock_xhs_service.get_note_all_comments = AsyncMock(return_value=[
+                {
+                    "id": "comment_1",
+                    "content": "评论内容",
+                    "user_info": {"user_id": "user_1", "nickname": "用户1"},
+                    "create_time": 1700000000,
+                    "like_count": 10,
+                    "sub_comment_count": 0,
+                    "target_comment": {"id": ""},
+                    "pictures": [
+                        {"url_default": "https://example.com/comment_img1.jpg"},
+                    ],
+                },
+            ])
+            mock_xhs.return_value = mock_xhs_service
+
+            with patch("cotton_mcp_tools.tools.xiaohongshu.OCRService") as mock_ocr_cls:
+                mock_ocr_service = MagicMock()
+                mock_ocr_service.recognize_text = AsyncMock(return_value={
+                    "texts": [{"content": "图片文字", "confidence": 0.95, "type": "body"}],
+                    "full_text": "图片中的文字内容",
+                    "language": "zh",
+                    "has_text": True,
+                    "backend": "llm",
+                })
+                mock_ocr_cls.return_value = mock_ocr_service
+
+                from cotton_mcp_tools.tools.xiaohongshu import register_xiaohongshu_tools
+
+                captured = {}
+                server = MagicMock()
+
+                def capture_tool():
+                    def decorator(func):
+                        captured[func.__name__] = func
+                        return func
+                    return decorator
+
+                server.tool = capture_tool
+                register_xiaohongshu_tools(server)
+
+                result = await captured["xhs_analyze_comments_with_ocr"]("test_note_123")
+                parsed = json.loads(result)
+
+                assert parsed["note_id"] == "test_note_123"
+                assert parsed["total_comments"] == 1
+                assert parsed["total_images"] == 1
+                assert parsed["analyzed_images"] == 1
+                assert len(parsed["comments"]) == 1
+                assert len(parsed["comments"][0]["picture_analysis"]) == 1
+                assert parsed["comments"][0]["picture_analysis"][0]["ocr_result"]["has_text"] is True
+                assert parsed["summary"]["total_comments_with_images"] == 1
+                assert len(parsed["summary"]["all_image_texts"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_analyze_comments_no_comments(self):
+        """Test comment OCR analysis when no comments found."""
+        with patch("cotton_mcp_tools.tools.xiaohongshu._create_service") as mock_xhs:
+            mock_xhs_service = MagicMock()
+            mock_xhs_service.get_note_all_comments = AsyncMock(return_value=[])
+            mock_xhs.return_value = mock_xhs_service
+
+            from cotton_mcp_tools.tools.xiaohongshu import register_xiaohongshu_tools
+
+            captured = {}
+            server = MagicMock()
+
+            def capture_tool():
+                def decorator(func):
+                    captured[func.__name__] = func
+                    return func
+                return decorator
+
+            server.tool = capture_tool
+            register_xiaohongshu_tools(server)
+
+            result = await captured["xhs_analyze_comments_with_ocr"]("test_note_123")
+            parsed = json.loads(result)
+
+            assert parsed["note_id"] == "test_note_123"
+            assert parsed["total_comments"] == 0
+            assert parsed["total_images"] == 0
+
+    @pytest.mark.asyncio
+    async def test_analyze_comments_with_no_images(self):
+        """Test comment OCR analysis when comments have no images."""
+        with patch("cotton_mcp_tools.tools.xiaohongshu._create_service") as mock_xhs:
+            mock_xhs_service = MagicMock()
+            mock_xhs_service.get_note_all_comments = AsyncMock(return_value=[
+                {
+                    "id": "comment_1",
+                    "content": "纯文字评论",
+                    "user_info": {"user_id": "user_1", "nickname": "用户1"},
+                    "create_time": 1700000000,
+                    "like_count": 5,
+                    "sub_comment_count": 0,
+                    "target_comment": {"id": ""},
+                    "pictures": [],
+                },
+            ])
+            mock_xhs.return_value = mock_xhs_service
+
+            from cotton_mcp_tools.tools.xiaohongshu import register_xiaohongshu_tools
+
+            captured = {}
+            server = MagicMock()
+
+            def capture_tool():
+                def decorator(func):
+                    captured[func.__name__] = func
+                    return func
+                return decorator
+
+            server.tool = capture_tool
+            register_xiaohongshu_tools(server)
+
+            result = await captured["xhs_analyze_comments_with_ocr"]("test_note_123")
+            parsed = json.loads(result)
+
+            assert parsed["total_comments"] == 1
+            assert parsed["total_images"] == 0
+            assert parsed["summary"]["total_comments_with_images"] == 0
+
+    @pytest.mark.asyncio
+    async def test_analyze_comments_xhs_error(self):
+        """Test comment OCR analysis when XHS API fails."""
+        with patch("cotton_mcp_tools.tools.xiaohongshu._create_service") as mock_xhs:
+            mock_xhs_service = MagicMock()
+            mock_xhs_service.get_note_all_comments = AsyncMock(
+                side_effect=DataFetchError("API error")
+            )
+            mock_xhs.return_value = mock_xhs_service
+
+            from cotton_mcp_tools.tools.xiaohongshu import register_xiaohongshu_tools
+
+            captured = {}
+            server = MagicMock()
+
+            def capture_tool():
+                def decorator(func):
+                    captured[func.__name__] = func
+                    return func
+                return decorator
+
+            server.tool = capture_tool
+            register_xiaohongshu_tools(server)
+
+            result = await captured["xhs_analyze_comments_with_ocr"]("test_note_123")
+            parsed = json.loads(result)
+
+            assert "error" in parsed
+            assert "API error" in parsed["error"]
+
+    @pytest.mark.asyncio
+    async def test_analyze_comments_ocr_error_graceful(self):
+        """Test comment OCR analysis handles OCR errors gracefully."""
+        with patch("cotton_mcp_tools.tools.xiaohongshu._create_service") as mock_xhs:
+            mock_xhs_service = MagicMock()
+            mock_xhs_service.get_note_all_comments = AsyncMock(return_value=[
+                {
+                    "id": "comment_1",
+                    "content": "评论",
+                    "user_info": {"user_id": "user_1", "nickname": "用户1"},
+                    "create_time": 1700000000,
+                    "like_count": 0,
+                    "sub_comment_count": 0,
+                    "target_comment": {"id": ""},
+                    "pictures": [{"url_default": "https://example.com/img.jpg"}],
+                },
+            ])
+            mock_xhs.return_value = mock_xhs_service
+
+            with patch("cotton_mcp_tools.tools.xiaohongshu.OCRService") as mock_ocr_cls:
+                mock_ocr_service = MagicMock()
+                mock_ocr_service.recognize_text = AsyncMock(
+                    side_effect=RuntimeError("OCR failed")
+                )
+                mock_ocr_cls.return_value = mock_ocr_service
+
+                from cotton_mcp_tools.tools.xiaohongshu import register_xiaohongshu_tools
+
+                captured = {}
+                server = MagicMock()
+
+                def capture_tool():
+                    def decorator(func):
+                        captured[func.__name__] = func
+                        return func
+                    return decorator
+
+                server.tool = capture_tool
+                register_xiaohongshu_tools(server)
+
+                result = await captured["xhs_analyze_comments_with_ocr"]("test_note_123")
+                parsed = json.loads(result)
+
+                # Should still return results even if OCR fails
+                assert parsed["total_comments"] == 1
+                assert parsed["total_images"] == 1
+                assert len(parsed["comments"][0]["picture_analysis"]) == 1
+                assert "error" in parsed["comments"][0]["picture_analysis"][0]["ocr_result"]
